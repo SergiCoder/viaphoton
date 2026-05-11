@@ -79,4 +79,23 @@ describe('<NutForm />', () => {
 
     expect(screen.getAllByTestId('result-ok')).toHaveLength(2);
   });
+
+  it('Load sample clears existing results from a previous compute', async () => {
+    const user = userEvent.setup();
+    render(<NutForm />);
+    const textarea = screen.getByLabelText(/D,N,F,C/i) as HTMLTextAreaElement;
+    await user.type(textarea, '5,10,1,10');
+    await user.click(screen.getByRole('button', { name: /compute/i }));
+    expect(screen.getByLabelText('results')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /load sample/i }));
+    expect(screen.queryByLabelText('results')).not.toBeInTheDocument();
+  });
+
+  it('computing with an empty textarea produces no output card', async () => {
+    const user = userEvent.setup();
+    render(<NutForm />);
+    await user.click(screen.getByRole('button', { name: /compute/i }));
+    expect(screen.queryByLabelText('results')).not.toBeInTheDocument();
+  });
 });

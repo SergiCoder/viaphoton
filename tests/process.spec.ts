@@ -70,4 +70,10 @@ describe('formatResults', () => {
   it('returns empty string for no results', () => {
     expect(formatResults([])).toBe('');
   });
+
+  it('formats a float X value using JS default number stringification', () => {
+    const x = 13.997;
+    const out = formatResults([{ ok: true, input: '10,100,1,10', X: x }]);
+    expect(out).toBe(`10,100,1,10 -> X = ${x}`);
+  });
 });

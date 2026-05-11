@@ -65,4 +65,14 @@ describe('parseLine — rejections', () => {
     const r = parseLine('-1,100,1,10');
     expect(r.ok).toBe(false);
   });
+
+  it('Zod failure error message contains the field path and Zod message', () => {
+    // -1 triggers the nonnegative constraint on field D, going through the
+    // `${issue.path.join('.')}: ${issue.message}` formatting in parseLine.
+    const r = parseLine('-1,100,1,10');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/D:/);
+    }
+  });
 });
