@@ -3,7 +3,7 @@
 This repository is my full submission for the viaPhoton exercise. It answers **all three questions** from the brief:
 
 1. **The Jeep / Desert-Crossing nut transport problem** — implemented end-to-end in this repo, with a Next.js web UI, a Node CLI, and a 100%-covered test suite.
-2. **A piece of code I'm proud of** — the recurring-schedule (RRULE) engine I wrote for [`brandtrack`](https://github.com/SergiCoder/brandtrack), with a brief code-reviewer's pass.
+2. **A piece of code I'm proud of** — an RFC 5545 RRULE engine I built for a Flutter/Dart project, included inline below.
 3. **My preferred processes / methodologies / tools** for building from scratch and for evolving existing products — bullet-point scaffolding, expanded inline.
 
 **Stack of this submission**: Next.js 16 · React 19 · TypeScript 6 (strict) · Zod 4 · Tailwind 4 · shadcn/ui · Vitest 4 · Biome 2 · pnpm
@@ -147,108 +147,160 @@ A correct implementation produces ≈ 14 here, **not 0**. This single number dis
 
 # Question 2 — A piece of code I'm proud of
 
-## 2.1 The code
+## 2.1 Context
 
-The recurring-schedule (RRULE) engine in [`brandtrack`](https://github.com/SergiCoder/brandtrack), specifically:
+A small RFC 5545 **RRULE** engine I wrote for a Flutter/Dart project that schedules and plays recurring content. Each scheduled item carries an RRULE (e.g., `FREQ=WEEKLY;BYDAY=MO,WE,FR;BYHOUR=9,12,15`); on every tick the runtime needs to answer *"does this rule apply right now?"*. The libraries on pub.dev I tried were either incomplete, awkward under null-safety, or had bugs around DST and `BYHOUR`/`BYMINUTE` interactions, so I wrote a focused slice of the spec.
 
-- [`packages/brandtrack_core/lib/rrule/rrule_current_time_validation.dart`](https://github.com/SergiCoder/brandtrack/blob/main/packages/brandtrack_core/lib/rrule/rrule_current_time_validation.dart) — `RruleCurrentTimeValidation` extension on `RRule`: given a `currentTime`, decides whether the rule applies right now.
-- [`packages/brandtrack_core/lib/rrule/datetime_extension.dart`](https://github.com/SergiCoder/brandtrack/blob/main/packages/brandtrack_core/lib/rrule/datetime_extension.dart) — `DateTimeExtension` on `DateTime`: helpers for `yearDay`, `beginningOfDay`, `beginningOfNextDay`. Foundation for the RRULE generator.
+## 2.2 The two classes
 
-## 2.2 Context
+```dart
+/// Extension for RRule to validate the current time.
+extension RruleCurrentTimeValidation on RRule {
+  /// Returns true if the current time is valid for the RRule.
+  bool isValidCurrentTime(DateTime currentTime) {
+    if (start != null &&
+        (currentTime.isBefore(start!) ||
+            (currentTime.isAtSameMomentAs(start!)))) {
+      return false;
+    }
+    if (until != null &&
+        ((currentTime.isAfter(until!)) ||
+            (currentTime.isAtSameMomentAs(until!)))) {
+      return false;
+    }
 
-`brandtrack` is a Flutter/Dart project that schedules and plays branded radio content. Each radio carries an [iCalendar RFC 5545](https://datatracker.ietf.org/doc/html/rfc5545#section-3.3.10) **RRULE** describing *when* it should be live (e.g., `FREQ=WEEKLY;BYDAY=MO,WE,FR;BYHOUR=9,12,15`). The runtime needs to answer one question every tick: *given current local time, is this radio scheduled now?*
+    final dayOfTheWeek = currentTime.weekday;
 
-There are RRULE libraries on pub.dev, but the ones I tried either didn't expose enough of the spec, didn't fit Flutter's null-safety constraints cleanly, or had unfixed bugs around DST and `BYHOUR`/`BYMINUTE` interactions. So I wrote a slim, focused version: just enough of RFC 5545 to support the rule shapes our content schedulers actually emit.
+    if ((frequency == RRuleFrequency.daily) &&
+        (byWeekDay.isNotEmpty) &&
+        byWeekDay.contains(dayOfTheWeek)) {
+      return true;
+    }
 
-## 2.3 What it does
+    final todayLocalTimes = generateTodayLocalTimes(now: currentTime);
 
-- **`RruleCurrentTimeValidation.isValidCurrentTime(currentTime)`** — composes a stack of cheap filters first (start window, until window, weekday match), then falls back to generating today's occurrence list and bucketing `currentTime` into the rule's frequency precision (hourly → top-of-hour, minutely → top-of-minute, etc.). The bucketing avoids the "the schedule said 12:00:00 but the tick fired at 12:00:01" class of off-by-microsecond bugs.
-- **`DateTimeExtension`** — `yearDay`, `beginningOfDay`, `beginningOfNextDay`. Small, but they're the primitives every other rule check builds on, so getting them right matters more than the lines suggest.
-- **`DateTimeListExtension.adjustDatesInFrequency`** — maps the list of today's local fire times onto the rule's precision bucket, so the `contains` check at the top of validation is symmetric across both sides.
+    if (todayLocalTimes.isEmpty) {
+      return false;
+    }
+    if (todayLocalTimes.first.isAfter(currentTime)) {
+      return false;
+    }
+    if (todayLocalTimes.last.isBefore(currentTime)) {
+      return false;
+    }
 
-## 2.4 Why I'm proud of it
+    final localTimeDatesAdjustedInFrequency = todayLocalTimes
+        .adjustDatesInFrequency(
+          frequency: frequency,
+          todayLocalTimes: todayLocalTimes,
+        );
 
-- It's the *opposite* of feature-creep: it implements only the slice of RFC 5545 we ship today, with extension hooks for the rest. Each branch (`byHour`, `byMinute`, `byWeekDay`, etc.) is a separate guard in `_dateMatchesCriteria`, not a god-method.
-- The validator pattern (cheap rejections first, expensive generation last) keeps the hot path fast.
-- Frequency-bucketing makes equality testing robust without compromising on precision when the rule asks for it.
-- It replaced a tangled mess of `if (now.hour == ... && now.minute == ...)` checks scattered through three callers with one `rrule.isValidCurrentTime(now)` call.
+    final adjustedCurrentTime = currentTime.adjustedDateInFrequency(frequency);
 
-## 2.5 Self-review — observations from re-reading the code while writing this README
+    if (!localTimeDatesAdjustedInFrequency.contains(adjustedCurrentTime)) {
+      return true;
+    }
+    return false;
+  }
+}
+```
 
-In the spirit of "show me how you think", here are three things I'd want to verify or fix on a follow-up pass. I have not pushed any changes to `brandtrack` from this session because I do not have Dart/Flutter installed on this machine and would not change scheduling logic without running its test suite.
+```dart
+/// Extension on DateTime: day-of-year and day-boundary helpers.
+extension DateTimeExtension on DateTime {
+  int get yearDay {
+    final firstDayOfYear = DateTime(year);
+    final difference = this.difference(firstDayOfYear).inDays + 1;
+    return difference;
+  }
 
-1. **Typo: `begninningOfNextDay`** — the getter in `datetime_extension.dart` has an extra `n` before `i`. Also used at `rrule_generator_extension.dart` line 12. Pure rename + propagation; no behavioural change. Low-risk fix once test runner is available.
-2. **Suspected logical inversion in `isValidCurrentTime`** — the final clause reads:
-   ```dart
-   if (!localTimeDatesAdjustedInFrequency.contains(adjustedCurrentTime)) {
-     return true;     // returns "valid" when current bucket is NOT a scheduled time
-   }
-   return false;
-   ```
-   Reading the caller at `packages/features/lib/player/domain/utils/radio_extensions.dart` (`if (!isValidCurrentTime) continue;` — skip radio when "not valid"), and the daily-`byWeekDay` branch immediately above (returns `true` when the weekday matches a schedule), the natural reading is that `true` should mean *"this rule fires now"*. Under that reading the final clause should be `if (contains) return true; return false;`. Worth pinning with a unit test asserting `isValidCurrentTime(scheduledFireMoment) == true` before flipping — but I'd flag it for review.
-3. **DST edge case in `yearDay`** — `this.difference(DateTime(year)).inDays + 1` uses duration arithmetic against a local-time anchor. With a DST transition between Jan 1 and `this`, `inDays` truncates and the result can be off by one for dates near year-end. Switching both anchors to `DateTime.utc(...)` sidesteps it without changing the public contract.
+  DateTime get beginningOfDay => DateTime(year, month, day);
 
-These are exactly the kind of findings I'd raise on a PR review of someone else's code, so I want them on the record for mine too.
+  DateTime get begninningOfNextDay =>
+      beginningOfDay.add(const Duration(days: 1));
+}
+```
+
+## 2.3 Why I'm proud
+
+- **Cheap rejections first, expensive generation last** — the validator short-circuits on `start`/`until`/weekday before generating today's full occurrence list.
+- **Frequency bucketing** rounds both sides to the rule's precision, so `isValidCurrentTime` works robustly when ticks land off the exact scheduled microsecond.
+- It replaced a sprawl of `if (now.hour == X && now.minute == Y)` across three callers with one `rrule.isValidCurrentTime(now)` call.
+
+## 2.4 Self-review notes
+
+Re-reading the code while writing this README, three things stand out:
+
+- **Typo** in `begninningOfNextDay` (extra `n`). Pure rename + propagation.
+- **Logical inversion suspicion** in the final clause of `isValidCurrentTime` — `if (!contains) return true; return false;` reads backwards against the function's name and its caller (`if (!isValidCurrentTime) continue;`). Worth pinning with a test asserting `isValidCurrentTime(scheduledFireMoment) == true` before flipping.
+- **DST edge case** in `yearDay` — `difference(...).inDays` against a local-time anchor truncates across DST transitions. `DateTime.utc(...)` on both sides removes it.
 
 ---
 
 # Question 3 — Preferred processes, methodologies, tools
 
-This section is intentionally a scaffold — each bullet is a one-line prompt for what I'd say in person. I can expand any of these into a full paragraph on request.
-
 ## 3.1 Building a product from scratch
 
-### Discovery & framing
-- One-pager before any code: who is this for, what does success look like in 30 days, what's the smallest thing that could be wrong about the premise.
-- Spike-then-throw-away to de-risk the riskiest unknown (a third-party API, a perf assumption, an integration) before committing to architecture.
+### Methodology: spec-driven development
 
-### Architecture & code shape
-- Hexagonal-lite as default — domain in pure modules, adapters at the edges. Same approach as this repo's `lib/` vs `components/` + `scripts/`.
-- Frozen stack documented in a project `CLAUDE.md`: language, runtime, lint, test, format, package manager, validation library — one of each. Deviations require justification in the README.
-- Strict TypeScript (or strong typing in whatever language) with explicit return types on exports, Zod (or equivalent) as the only validation library, `z.infer` as the only DTO source. No parallel hand-typed entities.
+For greenfield work I go with **spec-driven development**. Before any code, I want a written spec — the problem, the constraints, the acceptance criteria, the edge cases. It forces the ambiguity out early, when it's cheap to resolve. A vague spec turns into rework; a sharp spec turns into shippable code. This repo is itself an example: the brief was the spec, and the test suite (including the canonical `10,100,1,10 → ≈13.998` anchor) is its executable form.
 
-### Tests
-- Co-located `*.spec.ts` or a single `tests/` tree — pick one and stick to it.
-- 100% coverage gate enforced in CI from day one (see `vitest.config.mts` here). Easier to keep than to add back.
-- Integration-style tests at the boundary (`app.inject` for Fastify, RTL + jsdom for React). Mock only out-of-process I/O — never the validator, never the database client.
+### Tooling: AI-assisted, review-gated
+
+My default loop right now is **Claude Code with Opus 4.7**, paired with my own **Prism plugin** for structured review on every diff (TypeScript / Next.js / React / security / performance / quality / testing / documentation). The plugin enforces a consistent bar before code merges, so one person operates closer to the throughput of a small team without dropping review discipline.
+
+Tooling has to respect context, though. If the project involves **sensitive IP**, regulated data, or a client that doesn't allow third-party model providers, I won't force Claude Code into it. In that case I'd switch to an **open-source agent like opencode running against local LLMs** — slower and less capable today, but the code never leaves the environment. The methodology stays the same; only the engine changes.
+
+### Stack and architecture: requirements-led, reliability-first
+
+I have a strong opinion about *not* having strong opinions on stack up front. I start from the **requirements** — load profile, latency budget, team skills, compliance constraints, time-to-market — and let those decide. Preferences and trends don't matter. **Reliability does.** I'd rather pick a boring, well-understood stack I can reason about under failure than the most exciting one on Hacker News this month.
+
+For this submission the requirements pointed at a fullstack web stack with strict types and excellent ergonomics, so:
+
+- Next.js 16 (App Router) + React 19 + TypeScript 6 strict
+- Zod 4 as the sole validation library, `z.infer` as the only DTO source
+- Vitest 4 + 100% coverage gate enforced in CI from day one
+- Biome 2 for lint+format (one tool, no ESLint/Prettier zoo)
+- pnpm as package manager
+- Hexagonal-lite layout — `lib/` pure, `components/` + `scripts/` as adapters
+
+Different requirements would lead to a different stack. For a headless service I'd reach for Fastify 5 + Drizzle + Postgres; for a mobile target I've shipped Flutter/Dart before (see Question 2 for an example).
 
 ### Process & cadence
-- Conventional Commits, one logical purpose per commit. Squash-or-rebase merges only.
-- `prism:ship` (my commit + verify + push tool) at every checkpoint — typecheck + lint + tests run *before* each commit, not just in CI.
-- `prism:review-and-fix` run once before each merge: multi-profile review (TypeScript / Next.js / React / security / performance / quality / testing / documentation) that fixes findings directly, then I diff-review and accept selectively.
-- AI used aggressively for boilerplate and scaffolding; rejected for anything that would invalidate type safety, error handling, or test invariants.
 
-### Tooling defaults
-- Package manager: pnpm.
-- Lint + format: Biome (one tool, no ESLint/Prettier zoo).
-- Tests: Vitest (with v8 coverage); for backend, add Vitest + `app.inject` integration.
-- Framework default: Next.js 15+ for fullstack web; Fastify 5 + Drizzle + Postgres for headless services.
-- CI: GitHub Actions, single workflow, the same `pnpm typecheck && pnpm lint && pnpm test:coverage` you run locally — no divergence.
-- Observability from day one: structured logging (Pino for Fastify), one dashboard, request IDs, error alerting on a dedicated channel.
+- Conventional Commits, one logical purpose per commit. 
+- `prism:ship` at every checkpoint — typecheck + lint + tests run **before** each commit, not just in CI.
+- `prism:review-and-fix` once before each merge: multi-profile review that fixes findings directly, then I diff-review and accept selectively.
+- CI is the same `pnpm typecheck && pnpm lint && pnpm test:coverage` you run locally — no divergence.
+- Observability from day one: structured logging, request IDs, one dashboard, error alerting on a dedicated channel.
 
 ## 3.2 Applying the same to an existing product
 
-Most of the above transfers, but the *approach* changes — you cannot rebuild from scratch, so you fold improvements in incrementally.
+The spec-driven mindset and the AI-assisted workflow still apply — if anything they apply **more** on a live product, because changes have to coexist with existing behaviour, existing data, and existing users. But the constraints shift, and the discipline tightens as the cost of mistakes goes up.
 
-### What still applies (verbatim)
+### What still applies
+
 - Frozen stack documented in `CLAUDE.md` — capture what *is*, not what you wish were there.
 - Conventional Commits + `prism:ship` cadence.
 - Multi-profile review on every PR via `prism:review-and-fix`.
-- Strict typing where the codebase supports it; opt in file-by-file via `// @ts-strict` or per-file lint overrides if the global flip would be a multi-week stop-the-line.
-- Integration tests at the boundary, never mock the validator or DB client.
+- Strict typing where the codebase supports it; opt in file-by-file via per-file overrides if the global flip would be a multi-week stop-the-line.
+- Integration tests at the boundary, never mock the validator or the DB client.
 
 ### What changes
+
 - **Characterisation tests first** — before refactoring, write tests that pin current behaviour (even the weird parts). Then refactor with a safety net.
-- **Strangler-fig pattern** — new behaviour goes in the new architecture; old behaviour stays in the old until the new one is proven, then the old is removed. No big-bang rewrites.
-- **Coverage gate ratcheted, not flipped** — you can't go from 23% to 100% in a sprint, but you can set the gate to *"coverage cannot decrease from the current baseline"*. Then nudge it up on every PR that touches the area.
-- **Additive migrations only** — schema changes are deploy-then-backfill-then-cleanup, never "drop column in same release as code that stops using it". Each step deploys independently and is rollback-safe.
-- **Feature flags** (GrowthBook, LaunchDarkly, or a small internal one) for any change with a non-obvious blast radius. Default-off for new flags; remove flags within a sprint of full rollout — flags rot fast.
-- **One legacy hotspot at a time** — pick the single highest-traffic, highest-incident file each quarter and dedicate refactor time to it. Don't fan out.
+- **Strangler-fig pattern** — new behaviour goes in the new architecture; old behaviour stays in the old until the new is proven, then the old is removed. No big-bang rewrites.
+- **Coverage gate ratcheted, not flipped** — you can't go from 23% to 100% in a sprint, but you can set the gate to *"coverage cannot decrease from the current baseline"* and nudge it up on every touched area.
+- **Data-driven decisions dominate.** Product analytics (Amplitude / Mixpanel / PostHog), A/B tests, cohort analysis. You finally have real users — let them tell you what to build.
+- **Risk management matters more**: feature flags (GrowthBook, LaunchDarkly, or a small internal one) for any change with non-obvious blast radius. Default-off, removed within a sprint of full rollout — flags rot fast.
+- **Additive migrations only** — deploy-then-backfill-then-cleanup, never "drop column in same release as code that stops using it". Each step deploys independently and is rollback-safe.
+- **One legacy hotspot at a time** — highest-traffic, highest-incident file each quarter, dedicated refactor time. Don't fan out.
+- **Processes get slightly heavier on purpose**: incident response, on-call, RFC-style design docs for anything non-trivial.
+
+**The short version**: from scratch is about reducing uncertainty fast. Evolving is about reducing risk while still moving forward. Same principles — spec-driven, requirements-led, reliability-first — but the discipline tightens as the cost of mistakes goes up.
 
 ---
 
 # Repository hygiene
 
-- `CLAUDE.md` codifies project rules (stack, layout, TS discipline, Zod, 100% coverage, anti-patterns).
-- No `Co-Authored-By: Claude` trailers in any commit (see `CLAUDE.md` §2).
 - The first vanilla-JS pass is preserved in git history (commits before `13dc2d4`) for reference; the current `main` is the Next.js refactor.
