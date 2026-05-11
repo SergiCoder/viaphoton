@@ -153,6 +153,7 @@ A small RFC 5545 **RRULE** engine I wrote for a Flutter/Dart project that schedu
 
 ## 2.2 The two classes
 
+A standalone DartPad-runnable version with a 22-assertion test suite lives at [`scratch/rrule_dartpad.dart`](scratch/rrule_dartpad.dart) — paste into [dartpad.dev](https://dartpad.dev) and press Run.
 
 ```dart
 /// Extension for RRule to validate the current time.
