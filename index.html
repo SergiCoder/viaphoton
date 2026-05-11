@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Nut Transport — viaPhoton exercise</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
+    h1 { margin-bottom: 0.25rem; }
+    p.sub { color: #555; margin-top: 0; }
+    textarea { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95rem; }
+    button { font: inherit; padding: 0.5rem 1rem; cursor: pointer; }
+    pre { background: #f5f5f5; padding: 1rem; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+    .row { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+    details { margin-top: 1rem; }
+    summary { cursor: pointer; user-select: none; color: #444; }
+    table { border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
+    th, td { padding: 0.25rem 0.6rem; text-align: left; border-bottom: 1px solid #ddd; }
+    th { color: #555; font-weight: 600; }
+    td.case { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    td.x    { font-family: ui-monospace, Menlo, Consolas, monospace; color: #1a3a5c; }
+  </style>
+</head>
+<body>
+  <h1>Nut transport</h1>
+  <p class="sub">Enter one <code>D,N,F,C</code> per line. Click Compute.</p>
+
+  <textarea id="in" rows="11" placeholder="100,1000,1,50&#10;10,100,1,10&#10;20,200,1,10"></textarea>
+
+  <div class="row">
+    <button id="go">Compute</button>
+    <button id="clear" type="button">Clear</button>
+    <button id="sample" type="button">Load sample</button>
+  </div>
+
+  <pre id="out"></pre>
+
+  <details>
+    <summary>What does each sample line probe?</summary>
+    <table>
+      <thead>
+        <tr><th>D,N,F,C</th><th>Expected X</th><th>What it checks</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="case">0,100,1,10</td>    <td class="x">100</td>     <td>D = 0 — town at the pile, no travel</td></tr>
+        <tr><td class="case">10,0,1,10</td>     <td class="x">0</td>       <td>N = 0 — no nuts to move</td></tr>
+        <tr><td class="case">10,100,1,0</td>    <td class="x">0</td>       <td>C = 0 — cart can't carry anything</td></tr>
+        <tr><td class="case">10,100,0,10</td>   <td class="x">100</td>     <td>F = 0 — zero fuel cost, all arrives</td></tr>
+        <tr><td class="case">5,10,1,10</td>     <td class="x">5</td>       <td>Single trip, half the load is fuel</td></tr>
+        <tr><td class="case">10,10,1,10</td>    <td class="x">0</td>       <td>Single trip, all of it is fuel</td></tr>
+        <tr><td class="case">100,5,1,10</td>    <td class="x">0</td>       <td>One small load can't reach a far town</td></tr>
+        <tr><td class="case">10,100,1,10</td>   <td class="x">≈ 13.998</td><td><strong>Jeep canonical:</strong> D·F = C, naive answer is 0 — real answer needs depot shuttling</td></tr>
+        <tr><td class="case">20,200,1,10</td>   <td class="x">≈ 4.797</td> <td><strong>The hint:</strong> D·F &gt; C and X is still positive</td></tr>
+        <tr><td class="case">100,1000,1,10</td> <td class="x">0</td>       <td>Impossible at scale: harmonic-style sum of segments grows only ~log, so 1000 kg can't fund 100 km of shuttling</td></tr>
+      </tbody>
+    </table>
+  </details>
+
+  <script type="module">
+    import { processInput } from './solve.js';
+
+    const $in = document.getElementById('in');
+    const $out = document.getElementById('out');
+
+    const SAMPLE = [
+      '0,100,1,10',
+      '10,0,1,10',
+      '10,100,1,0',
+      '10,100,0,10',
+      '5,10,1,10',
+      '10,10,1,10',
+      '100,5,1,10',
+      '10,100,1,10',
+      '20,200,1,10',
+      '100,1000,1,10',
+    ].join('\n');
+
+    document.getElementById('go').addEventListener('click', () => {
+      $out.textContent = processInput($in.value);
+    });
+    document.getElementById('clear').addEventListener('click', () => {
+      $in.value = '';
+      $out.textContent = '';
+    });
+    document.getElementById('sample').addEventListener('click', () => {
+      $in.value = SAMPLE;
+    });
+  </script>
+</body>
+</html>
