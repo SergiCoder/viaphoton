@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useState, type JSX } from 'react';
 import { SAMPLE_INPUT, SampleLegend } from '@/components/sample-legend';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,19 +8,19 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { processInput, type ResultLine } from '@/lib/process';
 
-type IndexedResult = ResultLine & { readonly idx: number };
+type IndexedResult = ResultLine & { readonly rowKey: string };
 
-function indexResults(results: ResultLine[]): IndexedResult[] {
-  return results.map((r, idx) => ({ ...r, idx }));
+function toIndexed(results: ResultLine[]): IndexedResult[] {
+  return results.map((r, i) => ({ ...r, rowKey: `${i}:${r.input}` }));
 }
 
-export function NutForm() {
+export function NutForm(): JSX.Element {
   const [text, setText] = useState('');
   const [results, setResults] = useState<IndexedResult[]>([]);
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setResults(indexResults(processInput(text)));
+    setResults(toIndexed(processInput(text)));
   }
 
   function onClear() {
@@ -76,17 +76,13 @@ export function NutForm() {
               <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
                 {results.map((r) =>
                   r.ok ? (
-                    <div key={String(r.idx)} data-testid="result-ok">
+                    <div key={r.rowKey} data-testid="result-ok">
                       <span className="font-mono">{r.input}</span>
                       <span className="text-muted-foreground"> -&gt; X = </span>
                       <span className="font-mono font-semibold">{r.X}</span>
                     </div>
                   ) : (
-                    <div
-                      key={String(r.idx)}
-                      data-testid="result-error"
-                      className="text-destructive"
-                    >
+                    <div key={r.rowKey} data-testid="result-error" className="text-destructive">
                       <span className="font-mono">{r.input}</span>
                       <span> -&gt; error: </span>
                       <span>{r.error}</span>

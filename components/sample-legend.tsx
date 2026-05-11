@@ -1,3 +1,4 @@
+import { memo, type JSX } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export type SampleCase = {
@@ -33,7 +34,7 @@ export const SAMPLE_CASES: readonly SampleCase[] = [
 
 export const SAMPLE_INPUT = SAMPLE_CASES.map((c) => c.line).join('\n');
 
-export function SampleLegend() {
+export const SampleLegend = memo(function SampleLegend(): JSX.Element {
   return (
     <Card>
       <CardHeader>
@@ -61,4 +62,4 @@ export function SampleLegend() {
       </CardContent>
     </Card>
   );
-}
+});
