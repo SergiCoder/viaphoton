@@ -153,54 +153,31 @@ A small RFC 5545 **RRULE** engine I wrote for a Flutter/Dart project that schedu
 
 ## 2.2 The two classes
 
+
 ```dart
 /// Extension for RRule to validate the current time.
 extension RruleCurrentTimeValidation on RRule {
-  /// Returns true if the current time is valid for the RRule.
+  /// Returns true if [currentTime] falls within an active occurrence of this
+  /// rule. Cheap rejections first (start/until window, today's local-time
+  /// window), then bucket [currentTime] into the rule's frequency precision
+  /// and match it against today's scheduled fire times.
+  ///
+  /// Per RFC 5545, DTSTART and UNTIL are both inclusive — `currentTime ==
+  /// start` or `currentTime == until` count as valid occurrences.
   bool isValidCurrentTime(DateTime currentTime) {
-    if (start != null &&
-        (currentTime.isBefore(start!) ||
-            (currentTime.isAtSameMomentAs(start!)))) {
-      return false;
-    }
-    if (until != null &&
-        ((currentTime.isAfter(until!)) ||
-            (currentTime.isAtSameMomentAs(until!)))) {
-      return false;
-    }
-
-    final dayOfTheWeek = currentTime.weekday;
-
-    if ((frequency == RRuleFrequency.daily) &&
-        (byWeekDay.isNotEmpty) &&
-        byWeekDay.contains(dayOfTheWeek)) {
-      return true;
-    }
+    if (start != null && currentTime.isBefore(start!)) return false;
+    if (until != null && currentTime.isAfter(until!)) return false;
 
     final todayLocalTimes = generateTodayLocalTimes(now: currentTime);
+    if (todayLocalTimes.isEmpty) return false;
+    if (todayLocalTimes.first.isAfter(currentTime)) return false;
+    if (todayLocalTimes.last.isBefore(currentTime)) return false;
 
-    if (todayLocalTimes.isEmpty) {
-      return false;
-    }
-    if (todayLocalTimes.first.isAfter(currentTime)) {
-      return false;
-    }
-    if (todayLocalTimes.last.isBefore(currentTime)) {
-      return false;
-    }
-
-    final localTimeDatesAdjustedInFrequency = todayLocalTimes
-        .adjustDatesInFrequency(
-          frequency: frequency,
-          todayLocalTimes: todayLocalTimes,
-        );
-
-    final adjustedCurrentTime = currentTime.adjustedDateInFrequency(frequency);
-
-    if (!localTimeDatesAdjustedInFrequency.contains(adjustedCurrentTime)) {
-      return true;
-    }
-    return false;
+    final adjusted = todayLocalTimes.adjustDatesInFrequency(
+      frequency: frequency,
+      todayLocalTimes: todayLocalTimes,
+    );
+    return adjusted.contains(currentTime.adjustedDateInFrequency(frequency));
   }
 }
 ```
@@ -208,32 +185,30 @@ extension RruleCurrentTimeValidation on RRule {
 ```dart
 /// Extension on DateTime: day-of-year and day-boundary helpers.
 extension DateTimeExtension on DateTime {
+  /// Day of the year (1..366). UTC anchors sidestep DST truncation.
   int get yearDay {
-    final firstDayOfYear = DateTime(year);
-    final difference = this.difference(firstDayOfYear).inDays + 1;
-    return difference;
+    final firstDayUtc = DateTime.utc(year, 1, 1);
+    final thisDayUtc = DateTime.utc(year, month, day);
+    return thisDayUtc.difference(firstDayUtc).inDays + 1;
   }
 
+  /// Local midnight at the start of [this] day.
   DateTime get beginningOfDay => DateTime(year, month, day);
 
-  DateTime get begninningOfNextDay =>
-      beginningOfDay.add(const Duration(days: 1));
+  /// Local midnight at the start of the day after [this]. Calendar
+  /// arithmetic (`day + 1`) instead of `Duration(days: 1)` keeps the result
+  /// at midnight across DST transitions.
+  DateTime get beginningOfNextDay => DateTime(year, month, day + 1);
 }
 ```
 
 ## 2.3 Why I'm proud
 
-- **Cheap rejections first, expensive generation last** — the validator short-circuits on `start`/`until`/weekday before generating today's full occurrence list.
+- **Cheap rejections first, expensive generation last** — the validator short-circuits on `start`/`until` and on today's window before generating the full occurrence list.
 - **Frequency bucketing** rounds both sides to the rule's precision, so `isValidCurrentTime` works robustly when ticks land off the exact scheduled microsecond.
 - It replaced a sprawl of `if (now.hour == X && now.minute == Y)` across three callers with one `rrule.isValidCurrentTime(now)` call.
 
-## 2.4 Self-review notes
 
-Re-reading the code while writing this README, three things stand out:
-
-- **Typo** in `begninningOfNextDay` (extra `n`). Pure rename + propagation.
-- **Logical inversion suspicion** in the final clause of `isValidCurrentTime` — `if (!contains) return true; return false;` reads backwards against the function's name and its caller (`if (!isValidCurrentTime) continue;`). Worth pinning with a test asserting `isValidCurrentTime(scheduledFireMoment) == true` before flipping.
-- **DST edge case** in `yearDay` — `difference(...).inDays` against a local-time anchor truncates across DST transitions. `DateTime.utc(...)` on both sides removes it.
 
 ---
 
